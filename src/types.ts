@@ -25,13 +25,21 @@ export interface NutritionItem {
   unit: string;
 }
 
+export type LookupSource =
+  | 'openfoodfacts'
+  | 'upcitemdb'
+  | 'web_search'
+  | 'photo_identification'
+  | 'manual_entry'
+  | 'not_found';
+
 export interface ManufacturerInfo {
   companyName?: string;
   manufacturingPlaces?: string;
   origins?: string;
   stores?: string;
   countries?: string;
-  source: 'openfoodfacts' | 'gemini_web' | 'not_available';
+  source: 'openfoodfacts' | 'upcitemdb' | 'gemini_web' | 'photo_identification' | 'not_available';
 }
 
 export interface BatchExpiryRecord {
@@ -66,6 +74,8 @@ export interface ProductData {
   novaGroup?: number; // 1, 2, 3, 4
   ecoscoreGrade?: string; // 'a' | 'b' | 'c' | 'd' | 'e'
   servingSize?: string;
+  lookupSource?: LookupSource;
+  foundViaLabel?: string;
   manufacturer?: ManufacturerInfo;
   nutriments: {
     energyKcal100g?: number | null;
@@ -100,7 +110,8 @@ export interface HistoryScanItem {
   productName: string;
   brand?: string;
   imageUrl?: string;
-  source: 'openfoodfacts' | 'gemini_fallback' | 'not_found';
+  source: LookupSource | 'gemini_fallback';
+  foundViaLabel?: string;
   isFavorite: boolean;
   cachedProduct?: ProductData | null;
   cachedGeminiResult?: GeminiProductResult | null;
@@ -162,8 +173,29 @@ export interface GeminiProductResult {
   category?: string;
   priceRange?: string;
   description?: string;
+  imageUrl?: string;
+  images?: string[];
+  source?: LookupSource;
+  foundViaLabel?: string;
+  confidence?: string;
+  isPhotoId?: boolean;
   manufacturer?: ManufacturerInfo;
   sources: GroundingSource[];
+}
+
+export interface PhotoIdentifyResult {
+  barcode?: string;
+  found: boolean;
+  source: 'photo_identification';
+  foundViaLabel: string;
+  confidence?: string;
+  brand?: string;
+  productName?: string;
+  category?: string;
+  description?: string;
+  rawText: string;
+  imageUrl?: string;
+  manufacturer?: ManufacturerInfo;
 }
 
 export type ProductFetchStatus =

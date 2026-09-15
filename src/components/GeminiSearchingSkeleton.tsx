@@ -3,11 +3,20 @@ import { Globe, Loader2 } from 'lucide-react';
 
 interface GeminiSearchingSkeletonProps {
   barcode: string;
+  step?: 'off' | 'upcitemdb' | 'gemini';
 }
 
 export const GeminiSearchingSkeleton: React.FC<GeminiSearchingSkeletonProps> = ({
   barcode,
+  step = 'gemini',
 }) => {
+  const stepLabel =
+    step === 'off'
+      ? 'Checking Open Food Facts database...'
+      : step === 'upcitemdb'
+      ? 'Checking UPCItemDB retail catalog...'
+      : 'Searching live web indices with Gemini AI...';
+
   return (
     <div
       id="gemini-searching-skeleton"
@@ -17,10 +26,10 @@ export const GeminiSearchingSkeleton: React.FC<GeminiSearchingSkeletonProps> = (
         <Loader2 className="w-5 h-5 text-sky-400 animate-spin shrink-0" />
         <div className="min-w-0">
           <p className="text-xs font-semibold text-sky-300">
-            Searching web with Gemini AI...
+            {stepLabel}
           </p>
           <p className="text-[11px] text-zinc-400 font-mono truncate">
-            Looking up barcode {barcode} via Google Search
+            Barcode {barcode} · Sequential Lookup Chain
           </p>
         </div>
       </div>

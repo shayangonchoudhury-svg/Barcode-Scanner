@@ -13,6 +13,7 @@ import { NetworkErrorState } from './components/NetworkErrorState';
 import { GeminiProductView } from './components/GeminiProductView';
 import { GeminiNotFound } from './components/GeminiNotFound';
 import { GeminiSearchingSkeleton } from './components/GeminiSearchingSkeleton';
+import { PhotoIdentifyModal } from './components/PhotoIdentifyModal';
 import { BottomNav, NavTab } from './components/BottomNav';
 import { HistoryView } from './components/HistoryView';
 import { SettingsView } from './components/SettingsView';
@@ -26,8 +27,7 @@ import {
   HistoryScanItem,
 } from './types';
 import { playBeepSound, triggerHaptic } from './utils/scanner';
-import { fetchOpenFoodFactsProduct } from './utils/openFoodFacts';
-import { lookupBarcodeWithGemini } from './utils/geminiSearch';
+import { executeProductLookupChain } from './utils/productLookupChain';
 import {
   getUserDietaryProfile,
   saveUserDietaryProfile,
@@ -56,6 +56,8 @@ import {
   QrCode,
   X,
   CheckCircle2,
+  Camera,
+  Sparkles,
 } from 'lucide-react';
 
 export default function App() {
@@ -69,6 +71,8 @@ export default function App() {
   const [currentProduct, setCurrentProduct] = useState<ProductData | null>(null);
   const [geminiResult, setGeminiResult] = useState<GeminiProductResult | null>(null);
   const [networkError, setNetworkError] = useState<string | null>(null);
+  const [lookupStep, setLookupStep] = useState<'off' | 'upcitemdb' | 'gemini'>('off');
+  const [isPhotoModalOpen, setIsPhotoModalOpen] = useState<boolean>(false);
 
   // Secondary code scanning for Batch & Expiry (GS1-128 / Data Matrix)
   const [secondaryScanTargetBarcode, setSecondaryScanTargetBarcode] = useState<string | null>(null);
@@ -193,69 +197,9 @@ export default function App() {
   }, []);
 
   /**
-   * Handle Open Food Facts status !== 1 (product not found) -> Gemini Web Search Fallback
-   */
-  const handleProductNotFound = useCallback(async (code: string) => {
-    setProductStatus('gemini_searching');
-    setCurrentProduct(null);
-    setGeminiResult(null);
-
-    // If offline, skip network fallback and record not_found
-    if (!navigator.onLine) {
-      setNetworkError('You are offline. Web search fallback requires an active internet connection.');
-      setProductStatus('network_error');
-      const updated = recordScanInHistory({
-        barcode: code,
-        source: 'not_found',
-        productName: 'Product Not Found (Offline)',
-      });
-      setHistory(updated);
-      return;
-    }
-
-    try {
-      const result = await lookupBarcodeWithGemini(code);
-      setGeminiResult(result);
-      if (result.found) {
-        setProductStatus('gemini_found');
-        const updated = recordScanInHistory({
-          barcode: code,
-          source: 'gemini_fallback',
-          productName: result.productName || 'Web Product Search Result',
-          brand: result.brand,
-          geminiResult: result,
-        });
-        setHistory(updated);
-      } else {
-        setProductStatus('gemini_not_found');
-        const updated = recordScanInHistory({
-          barcode: code,
-          source: 'not_found',
-          productName: 'Product Not Found',
-        });
-        setHistory(updated);
-      }
-    } catch (err) {
-      console.warn('Gemini search fallback error:', err);
-      const fallbackResult: GeminiProductResult = {
-        barcode: code,
-        found: false,
-        rawText: 'No verified product information was found.',
-        sources: [],
-      };
-      setGeminiResult(fallbackResult);
-      setProductStatus('gemini_not_found');
-      const updated = recordScanInHistory({
-        barcode: code,
-        source: 'not_found',
-        productName: 'Product Not Found',
-      });
-      setHistory(updated);
-    }
-  }, []);
-
-  /**
    * Primary handler triggered when barcode is detected by camera or manual entry.
+   * Executes the full sequential lookup chain:
+   * Open Food Facts -> UPCItemDB -> Gemini Search Grounding -> Photo ID fallback -> Manual entry
    */
   const handleBarcodeDetected = useCallback(
     async (code: string, format = 'standard', source: 'native' | 'html5-qrcode' | 'manual' = 'manual') => {
@@ -319,6 +263,7 @@ export default function App() {
 
       setActiveBarcode(cleanCode);
       setProductStatus('loading');
+      setLookupStep('off');
       setNetworkError(null);
 
       // 3. Offline check: if offline, check if item is in local history cache!
@@ -327,10 +272,12 @@ export default function App() {
         if (cachedItem) {
           if (cachedItem.cachedProduct) {
             setCurrentProduct(cachedItem.cachedProduct);
+            setGeminiResult(null);
             setProductStatus('found');
             return;
           }
           if (cachedItem.cachedGeminiResult) {
+            setCurrentProduct(null);
             setGeminiResult(cachedItem.cachedGeminiResult);
             setProductStatus('gemini_found');
             return;
@@ -343,30 +290,69 @@ export default function App() {
         return;
       }
 
-      // 4. Fetch from Open Food Facts API
-      const result = await fetchOpenFoodFactsProduct(cleanCode);
-
-      if (result.status === 'found' && result.product) {
-        setCurrentProduct(result.product);
-        setProductStatus('found');
-        const updated = recordScanInHistory({
-          barcode: cleanCode,
-          source: 'openfoodfacts',
-          productName: result.product.productName,
-          brand: result.product.brands,
-          imageUrl: result.product.imageUrl,
-          product: result.product,
+      // 4. Run the full sequential product lookup chain
+      try {
+        const chainResult = await executeProductLookupChain(cleanCode, (step) => {
+          setLookupStep(step);
+          if (step !== 'off') {
+            setProductStatus('gemini_searching');
+          }
         });
-        setHistory(updated);
-      } else if (result.status === 'not_found') {
-        handleProductNotFound(cleanCode);
-      } else if (result.status === 'network_error') {
-        setNetworkError(result.error || 'Network request failed. Could not reach Open Food Facts.');
-        setProductStatus('network_error');
+
+        if (chainResult.status === 'found') {
+          if (chainResult.source === 'openfoodfacts' && chainResult.product) {
+            setCurrentProduct(chainResult.product);
+            setGeminiResult(null);
+            setProductStatus('found');
+            const updated = recordScanInHistory({
+              barcode: cleanCode,
+              source: 'openfoodfacts',
+              productName: chainResult.product.productName,
+              brand: chainResult.product.brands,
+              imageUrl: chainResult.product.imageUrl,
+              product: chainResult.product,
+            });
+            setHistory(updated);
+          } else if (chainResult.geminiResult) {
+            setCurrentProduct(null);
+            setGeminiResult(chainResult.geminiResult);
+            setProductStatus('gemini_found');
+            const updated = recordScanInHistory({
+              barcode: cleanCode,
+              source: (chainResult.source as any) || 'upcitemdb',
+              productName: chainResult.geminiResult.productName || 'Product Result',
+              brand: chainResult.geminiResult.brand,
+              imageUrl: chainResult.geminiResult.imageUrl,
+              geminiResult: chainResult.geminiResult,
+            });
+            setHistory(updated);
+          }
+        } else if (chainResult.status === 'network_error') {
+          setCurrentProduct(null);
+          setGeminiResult(null);
+          setNetworkError("Couldn't reach the lookup service, check your connection and retry");
+          setProductStatus('network_error');
+        } else {
+          // status === 'not_found'
+          setCurrentProduct(null);
+          setGeminiResult(null);
+          setProductStatus('gemini_not_found');
+          const updated = recordScanInHistory({
+            barcode: cleanCode,
+            source: 'not_found',
+            productName: 'Product Not Found',
+          });
+          setHistory(updated);
+        }
+      } catch (err) {
+        console.warn('Unexpected error in lookup chain:', err);
         setCurrentProduct(null);
+        setGeminiResult(null);
+        setNetworkError("Couldn't reach the lookup service, check your connection and retry");
+        setProductStatus('network_error');
       }
     },
-    [soundEnabled, vibrateEnabled, history, handleProductNotFound]
+    [soundEnabled, vibrateEnabled, history, secondaryScanTargetBarcode, currentProduct, geminiResult]
   );
 
   // Reset to scanner
@@ -496,9 +482,9 @@ export default function App() {
               <ProductSkeleton barcode={activeBarcode} />
             )}
 
-            {/* State 2: Gemini Google Search Grounding In-flight Skeleton */}
+            {/* State 2: Multi-step Sequential Product Lookup In-flight Skeleton */}
             {productStatus === 'gemini_searching' && activeBarcode && (
-              <GeminiSearchingSkeleton barcode={activeBarcode} />
+              <GeminiSearchingSkeleton barcode={activeBarcode} step={lookupStep} />
             )}
 
             {/* State 3: Product Successfully Found (Open Food Facts) */}
@@ -513,7 +499,7 @@ export default function App() {
               />
             )}
 
-            {/* State 4: Product Found via Gemini Web Search Fallback */}
+            {/* State 4: Product Found via UPCItemDB / Gemini / Photo ID */}
             {productStatus === 'gemini_found' && geminiResult && (
               <GeminiProductView
                 result={geminiResult}
@@ -525,9 +511,17 @@ export default function App() {
               />
             )}
 
-            {/* State 5: Product Not Found (Both Open Food Facts & Gemini Search) */}
+            {/* State 5: Product Not Found across all services */}
             {productStatus === 'gemini_not_found' && activeBarcode && (
-              <GeminiNotFound barcode={activeBarcode} onScanAnother={handleScanAnother} />
+              <GeminiNotFound
+                barcode={activeBarcode}
+                onScanAnother={handleScanAnother}
+                onTryPhoto={() => setIsPhotoModalOpen(true)}
+                onManualEntry={() => {
+                  setActiveTab('manual');
+                  setProductStatus('idle');
+                }}
+              />
             )}
 
             {/* State 6: Network Error / Offline lookup failure */}
@@ -572,28 +566,36 @@ export default function App() {
                 )}
 
                 {/* Mode Selector Pill */}
-                <div className="flex bg-zinc-900/80 p-1 rounded-2xl border border-zinc-800 w-full max-w-xs shadow-inner">
+                <div className="flex bg-zinc-900/80 p-1 rounded-2xl border border-zinc-800 w-full max-w-sm shadow-inner">
                   <button
                     onClick={() => setActiveTab('camera')}
-                    className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                    className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
                       activeTab === 'camera'
                         ? 'bg-zinc-800 text-white shadow-sm'
                         : 'text-zinc-400 hover:text-zinc-200'
                     }`}
                   >
-                    <Scan className="w-4 h-4 text-emerald-400" />
-                    <span>Camera</span>
+                    <Scan className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Barcode</span>
                   </button>
                   <button
                     onClick={() => setActiveTab('manual')}
-                    className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                    className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
                       activeTab === 'manual'
                         ? 'bg-zinc-800 text-white shadow-sm'
                         : 'text-zinc-400 hover:text-zinc-200'
                     }`}
                   >
-                    <Keyboard className="w-4 h-4 text-emerald-400" />
+                    <Keyboard className="w-3.5 h-3.5 text-emerald-400" />
                     <span>Manual</span>
+                  </button>
+                  <button
+                    onClick={() => setIsPhotoModalOpen(true)}
+                    className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-semibold text-amber-300/90 hover:text-amber-200 hover:bg-amber-950/40 transition-all cursor-pointer"
+                    title="Identify product from package photo"
+                  >
+                    <Camera className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Photo ID</span>
                   </button>
                 </div>
 
@@ -697,6 +699,29 @@ export default function App() {
             <span className="text-xs font-medium">{batchScanSuccessToast}</span>
           </div>
         )}
+
+        {/* Photo Visual Identification Modal */}
+        <PhotoIdentifyModal
+          isOpen={isPhotoModalOpen}
+          barcode={activeBarcode || undefined}
+          onClose={() => setIsPhotoModalOpen(false)}
+          onIdentified={(identifiedProduct) => {
+            setIsPhotoModalOpen(false);
+            setCurrentProduct(null);
+            setGeminiResult(identifiedProduct);
+            setActiveBarcode(identifiedProduct.barcode || 'PHOTO_ID');
+            setProductStatus('gemini_found');
+            const updated = recordScanInHistory({
+              barcode: identifiedProduct.barcode || 'PHOTO_ID',
+              source: 'photo_identification',
+              productName: identifiedProduct.productName || 'Visual Photo Identification',
+              brand: identifiedProduct.brand,
+              imageUrl: identifiedProduct.imageUrl,
+              geminiResult: identifiedProduct,
+            });
+            setHistory(updated);
+          }}
+        />
       </main>
 
       {/* Production App Shell Bottom Navigation */}

@@ -26,18 +26,18 @@ export const NetworkErrorState: React.FC<NetworkErrorStateProps> = ({
       </div>
 
       <h2 className="text-lg font-bold text-zinc-100 mb-1">
-        Network Request Failed
+        Couldn't reach the lookup service
       </h2>
 
       <p className="text-xs text-zinc-400 mb-4 max-w-xs mx-auto">
-        Unable to reach the Open Food Facts service for barcode{' '}
-        <span className="font-mono text-zinc-300 font-semibold">{barcode}</span>.
+        Unable to complete lookup for barcode{' '}
+        <span className="font-mono text-zinc-300 font-semibold">{barcode}</span>. Check your connection and retry.
       </p>
 
       <div className="bg-zinc-950 p-3.5 rounded-xl border border-zinc-800/80 mb-5 text-left flex items-start gap-2.5">
         <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
         <p className="text-xs text-zinc-400">
-          {errorMessage || 'Connection failed or timed out. Please check your internet connection.'}
+          {errorMessage || "Couldn't reach the lookup service, check your connection and retry."}
         </p>
       </div>
 

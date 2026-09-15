@@ -132,7 +132,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
 
       {/* Top Bar: Brand, Barcode, and Scan Another Button */}
       <div className="flex items-center justify-between gap-2 pb-3 border-b border-zinc-800/80">
-        <div className="flex items-center gap-2 overflow-hidden">
+        <div className="flex items-center gap-2 overflow-hidden flex-wrap">
           <button
             onClick={handleCopyCode}
             className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-zinc-950 hover:bg-zinc-800 border border-zinc-800 text-xs font-mono text-zinc-300 transition-colors cursor-pointer"
@@ -145,6 +145,9 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
             )}
             <span>{product.code}</span>
           </button>
+          <span className="px-2 py-0.5 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-[10px] font-medium text-emerald-400 whitespace-nowrap">
+            {product.foundViaLabel || 'Found via: Open Food Facts'}
+          </span>
         </div>
 
         <div className="flex items-center gap-2 shrink-0">

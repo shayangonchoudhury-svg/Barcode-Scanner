@@ -1,4 +1,4 @@
-import { HistoryScanItem, ProductData, GeminiProductResult } from '../types';
+import { HistoryScanItem, ProductData, GeminiProductResult, LookupSource } from '../types';
 
 export const HISTORY_STORAGE_KEY = 'barcode_scanner_history_v1';
 export const MAX_HISTORY_ITEMS = 200;
@@ -73,7 +73,7 @@ export function formatRelativeTime(timestamp: number): string {
  */
 export function recordScanInHistory(params: {
   barcode: string;
-  source: 'openfoodfacts' | 'gemini_fallback' | 'not_found';
+  source: LookupSource | 'gemini_fallback';
   productName?: string;
   brand?: string;
   imageUrl?: string;

@@ -1197,7 +1197,7 @@ async function checkNativeBarcodeSupport() {
 /**
  * Renders in-flight Gemini Web Search Loading State
  */
-function renderGeminiSearching(code) {
+function renderGeminiSearching(code, stepText = 'Checking UPCItemDB & web databases...') {
   const mainView = document.getElementById('app-main-content');
   if (!mainView) return;
 
@@ -1206,8 +1206,8 @@ function renderGeminiSearching(code) {
       <div class="skeleton-header">
         <div class="skeleton-spinner" style="border-top-color: #38bdf8;"></div>
         <div>
-          <p class="skeleton-loading-text" style="color: #38bdf8;">Searching web with Gemini AI...</p>
-          <p class="skeleton-code font-mono">Barcode: ${code} • Querying Google Search Grounding</p>
+          <p class="skeleton-loading-text" style="color: #38bdf8;">${stepText}</p>
+          <p class="skeleton-code font-mono">Barcode: ${code} • Sequential Lookup Chain</p>
         </div>
       </div>
       <div class="skeleton-top-row">
@@ -1236,25 +1236,38 @@ function renderGeminiSearching(code) {
 }
 
 /**
- * Renders the product found via Gemini Web Search Grounding.
- * Matches the Open Food Facts detail view style, but includes:
- * - Distinct "Found via web search — not in our verified product database" badge in a different color.
- * - Clickable grounding sources & citations.
+ * Renders product view with explicit "Found via: [Source]" label and photo verification warning if visual ID was used.
  */
 function renderGeminiProductView(data) {
   const mainView = document.getElementById('app-main-content');
   if (!mainView) return;
 
   const brand = data.brand || 'Unspecified Brand';
-  const productName = data.productName || 'Web Product Search Result';
+  const productName = data.productName || 'Product Result';
   const category = data.category || '';
   const priceRange = data.priceRange || 'Not reported';
-  const description = data.description || data.rawText || 'Product found via Google Search.';
+  const description = data.description || data.rawText || 'Product retrieved via lookup service.';
   const sources = data.sources || [];
+  const imageUrl = data.imageUrl || (Array.isArray(data.images) && data.images[0]) || '';
+
+  const isPhotoId = data.source === 'photo_identification' || data.isPhotoId;
+  const isUpc = data.source === 'upcitemdb';
+  const sourceLabel = data.foundViaLabel || (isPhotoId ? 'Identified from photo — verify details independently' : isUpc ? 'Found via: UPCItemDB' : 'Found via: Web search');
 
   const profile = getDietaryProfile();
   const checkResult = checkGeminiAgainstUserProfile(data, profile);
   const allergenBannerHtml = renderAllergenBannerHtml(checkResult);
+
+  // Manufacturer info extraction
+  const mfg = data.manufacturer;
+  const mfgHtml = mfg ? `
+    <div class="detail-section" style="margin-top:1rem;background:rgba(24,24,27,0.8);padding:0.75rem;border-radius:0.75rem;border:1px solid #27272a;">
+      <h3 class="section-title" style="color:#a1a1aa;font-size:0.75rem;text-transform:uppercase;margin-bottom:0.4rem;">Manufacturer & Origin</h3>
+      <p style="font-size:0.8rem;color:#f4f4f5;margin-bottom:0.25rem;"><strong>Company:</strong> ${mfg.companyName || 'Manufacturer details not available for this product'}</p>
+      ${mfg.manufacturingPlaces ? `<p style="font-size:0.8rem;color:#d4d4d8;margin-bottom:0.25rem;"><strong>Location:</strong> ${mfg.manufacturingPlaces}</p>` : ''}
+      ${mfg.origins ? `<p style="font-size:0.8rem;color:#d4d4d8;"><strong>Origin:</strong> ${mfg.origins}</p>` : ''}
+    </div>
+  ` : '';
 
   mainView.innerHTML = `
     <div id="product-detail-card" class="product-card gemini-card">
@@ -1262,15 +1275,34 @@ function renderGeminiProductView(data) {
       ${allergenBannerHtml}
 
       <!-- Distinct Source Badge required by prompt -->
-      <div class="badge-web-search">
-        <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
-        </svg>
-        <span>Found via web search — not in our verified product database</span>
-      </div>
+      ${isPhotoId ? `
+        <div class="badge-web-search" style="background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.3);color:#fbbf24;text-align:left;padding:0.6rem 0.8rem;">
+          <div style="font-weight:700;font-size:0.8rem;">Identified from photo — verify details independently</div>
+          <div style="font-size:0.7rem;color:#fcd34d;margin-top:0.15rem;">Visual AI identification has lower certainty than barcode database records.</div>
+        </div>
+      ` : isUpc ? `
+        <div class="badge-web-search" style="background:rgba(168,85,247,0.12);border:1px solid rgba(168,85,247,0.3);color:#c084fc;">
+          <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
+          </svg>
+          <span>Found via: UPCItemDB Retail Database</span>
+        </div>
+      ` : `
+        <div class="badge-web-search" style="background:rgba(14,165,233,0.12);border:1px solid rgba(14,165,233,0.3);color:#38bdf8;">
+          <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
+          </svg>
+          <span>Found via: Web search — not in verified food database</span>
+        </div>
+      `}
 
       <div class="product-top-bar" style="display:flex;align-items:center;justify-content:space-between;gap:0.5rem;flex-wrap:wrap;">
-        <span class="barcode-pill font-mono">${data.barcode}</span>
+        <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;">
+          <span class="barcode-pill font-mono">${data.barcode}</span>
+          <span style="font-size:0.7rem;padding:0.15rem 0.5rem;border-radius:0.375rem;background:#27272a;color:#a1a1aa;border:1px solid #3f3f46;">
+            ${sourceLabel}
+          </span>
+        </div>
         <div style="display:flex;align-items:center;gap:0.5rem;">
           <button id="btn-fav-${data.barcode}" onclick="toggleFavoriteFromCurrentProduct('${data.barcode}')" class="btn-favorite-top ${isBarcodeFavorited(data.barcode) ? 'active' : ''}" title="${isBarcodeFavorited(data.barcode) ? 'Remove Favorite' : 'Save to Favorites'}">
             <svg class="w-3.5 h-3.5" fill="${isBarcodeFavorited(data.barcode) ? '#fbbf24' : 'none'}" stroke="currentColor" viewBox="0 0 24 24">
@@ -1288,11 +1320,13 @@ function renderGeminiProductView(data) {
       </div>
 
       <div class="product-hero">
-        <div class="product-img-frame no-img" style="border-color: rgba(56, 189, 248, 0.3);">
-          <svg class="w-8 h-8 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-          </svg>
-          <span style="color:#38bdf8;font-size:0.65rem;margin-top:0.25rem;">Web Product</span>
+        <div class="product-img-frame ${imageUrl ? '' : 'no-img'}" style="border-color: rgba(56, 189, 248, 0.3);">
+          ${imageUrl ? `<img src="${imageUrl}" alt="${productName}" style="width:100%;height:100%;object-fit:contain;" referrerpolicy="no-referrer" />` : `
+            <svg class="w-8 h-8 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+            </svg>
+            <span style="color:#38bdf8;font-size:0.65rem;margin-top:0.25rem;">Product</span>
+          `}
         </div>
         <div class="product-meta">
           <span class="product-brand" style="color:#38bdf8;">${brand}</span>
@@ -1321,13 +1355,15 @@ function renderGeminiProductView(data) {
         </p>
       </div>
 
-      <!-- Grounding Sources & Citations -->
-      <div class="citations-section">
-        <div class="citations-header">
-          <span class="citations-title">Grounding Sources & Web Citations (${sources.length})</span>
-          <span class="font-mono text-xs" style="color:#71717a;">Google Search</span>
-        </div>
-        ${sources.length > 0 ? `
+      ${mfgHtml}
+
+      <!-- Grounding Sources & Citations if applicable -->
+      ${sources.length > 0 ? `
+        <div class="citations-section">
+          <div class="citations-header">
+            <span class="citations-title">Grounding Sources (${sources.length})</span>
+            <span class="font-mono text-xs" style="color:#71717a;">Google Search</span>
+          </div>
           <div class="citations-list">
             ${sources.map((s) => `
               <a href="${s.url}" target="_blank" rel="noopener noreferrer" class="citation-link">
@@ -1338,10 +1374,8 @@ function renderGeminiProductView(data) {
               </a>
             `).join('')}
           </div>
-        ` : `
-          <p class="empty-state-text">Results verified with Google Search grounding.</p>
-        `}
-      </div>
+        </div>
+      ` : ''}
 
       <!-- Actions -->
       <div class="actions-stack">
@@ -1354,9 +1388,9 @@ function renderGeminiProductView(data) {
 }
 
 /**
- * Clear final state when neither Open Food Facts nor Gemini web search finds verified information.
- * Shows note: "Some store-specific or regional barcodes aren't in any public database."
- * Keeps manual entry option available.
+ * Clear final state when all automated sources (Open Food Facts, UPCItemDB, Gemini web search) return no data.
+ * Displays "Couldn't identify by barcode — try a photo instead" button to trigger visual photo identification,
+ * alongside manual text entry.
  */
 function renderGeminiNotFoundView(code) {
   const mainView = document.getElementById('app-main-content');
@@ -1372,12 +1406,24 @@ function renderGeminiNotFoundView(code) {
       </div>
       <h2 class="status-title">No information found for this barcode</h2>
       <p class="status-subtitle">
-        Neither the Open Food Facts food database nor Google web search returned verified product information for barcode <span class="font-mono text-amber">${code}</span>.
+        Barcode <span class="font-mono text-amber">${code}</span> was not found across Open Food Facts, UPCItemDB, or web search.
       </p>
 
-      <div class="note-box">
-        <p class="note-box-title">Note</p>
-        <p>Some store-specific or regional barcodes aren't in any public database.</p>
+      <!-- Visual Photo Identification Option (True fallback of last resort) -->
+      <div class="note-box" style="border-color:rgba(245,158,11,0.3);background:rgba(245,158,11,0.08);margin-bottom:1rem;text-align:left;">
+        <p class="note-box-title" style="color:#fbbf24;display:flex;align-items:center;gap:0.4rem;">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+          </svg>
+          Couldn't identify by barcode — try a photo instead
+        </p>
+        <p style="font-size:0.75rem;color:#d4d4d8;margin-bottom:0.75rem;">
+          Take a photo of the product packaging or brand label. Gemini Vision will identify the product visually even without barcode indexing.
+        </p>
+        <button id="btn-try-photo-fallback" onclick="openPhotoIdentifyModal('${code}')" class="btn-primary" style="background:#f59e0b;color:#09090b;font-weight:700;padding:0.6rem 1rem;">
+          Open Camera in Photo Mode
+        </button>
       </div>
 
       <div class="code-banner">
@@ -1385,11 +1431,11 @@ function renderGeminiNotFoundView(code) {
         <span class="value font-mono">${code}</span>
       </div>
 
-      <!-- Manual entry option remains available -->
+      <!-- Manual entry option -->
       <div class="manual-card" style="margin-top: 1rem; text-align: left;">
         <form onsubmit="handleManualFormSubmit(event)">
-          <label for="manual-barcode-input-notfound" class="result-label" style="font-size:0.75rem;margin-bottom:0.4rem;display:block;">
-            Enter Another Barcode Manually
+          <label for="manual-barcode-input" class="result-label" style="font-size:0.75rem;margin-bottom:0.4rem;display:block;">
+            Enter Another Barcode or Details Manually
           </label>
           <div style="display: flex; gap: 0.5rem;">
             <input
@@ -1419,69 +1465,330 @@ function renderGeminiNotFoundView(code) {
 }
 
 /**
+ * Visual Photo Identification Modal & Capture flow
+ */
+let photoStream = null;
+
+async function openPhotoIdentifyModal(barcode = '') {
+  let modal = document.getElementById('photo-identify-modal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'photo-identify-modal';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:9999;display:flex;align-items:center;justify-content:center;padding:1rem;';
+    document.body.appendChild(modal);
+  }
+
+  modal.innerHTML = `
+    <div style="background:#18181b;border:1px solid #27272a;border-radius:1.5rem;max-width:440px;width:100%;overflow:hidden;box-shadow:0 25px 50px -12px rgba(0,0,0,0.5);">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:1rem;border-bottom:1px solid #27272a;">
+        <div style="display:flex;align-items:center;gap:0.5rem;">
+          <svg class="w-5 h-5 text-amber" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+          </svg>
+          <span style="font-weight:700;font-size:0.9rem;color:#fff;">Visual Product Identification</span>
+        </div>
+        <button onclick="closePhotoIdentifyModal()" style="background:none;border:none;color:#a1a1aa;cursor:pointer;padding:0.25rem;">
+          ✕
+        </button>
+      </div>
+
+      <div style="padding:0.5rem 1rem;background:rgba(245,158,11,0.1);border-bottom:1px solid rgba(245,158,11,0.2);color:#fcd34d;font-size:0.75rem;">
+        Point at front packaging, brand name, and product label.
+      </div>
+
+      <div style="position:relative;background:#000;aspect-ratio:4/3;overflow:hidden;display:flex;align-items:center;justify-content:center;">
+        <video id="photo-video-preview" autoplay playsinline muted style="width:100%;height:100%;object-fit:cover;"></video>
+        <canvas id="photo-capture-canvas" style="display:none;"></canvas>
+
+        <div id="photo-loading-overlay" style="display:none;position:absolute;inset:0;background:rgba(0,0,0,0.8);flex-direction:column;align-items:center;justify-content:center;color:#fff;padding:1rem;text-align:center;">
+          <div class="skeleton-spinner" style="border-top-color:#10b981;margin-bottom:0.75rem;"></div>
+          <p style="font-weight:700;font-size:0.85rem;margin-bottom:0.25rem;">Analyzing packaging with Gemini Vision...</p>
+          <p style="font-size:0.75rem;color:#a1a1aa;">Reading packaging text and brand logos</p>
+        </div>
+      </div>
+
+      <div id="photo-error-box" style="display:none;padding:0.75rem 1rem;background:rgba(244,63,94,0.1);color:#fda4af;font-size:0.75rem;border-bottom:1px solid rgba(244,63,94,0.2);"></div>
+
+      <div style="padding:1rem;display:flex;gap:0.5rem;background:#09090b;">
+        <input type="file" id="photo-file-input" accept="image/*" capture="environment" style="display:none;" onchange="handlePhotoFileSelected(event, '${barcode}')" />
+        <button onclick="document.getElementById('photo-file-input').click()" class="btn-secondary" style="font-size:0.75rem;padding:0.6rem 0.75rem;">
+          Upload Photo
+        </button>
+        <button id="btn-capture-photo" onclick="capturePhotoSnapshot('${barcode}')" class="btn-primary" style="flex:1;background:#10b981;font-weight:700;">
+          Capture & Identify
+        </button>
+      </div>
+    </div>
+  `;
+
+  modal.style.display = 'flex';
+
+  try {
+    const video = document.getElementById('photo-video-preview');
+    photoStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: false,
+    });
+    if (video) {
+      video.srcObject = photoStream;
+      await video.play();
+    }
+  } catch (err) {
+    console.warn('Could not open camera for photo mode:', err);
+    const errBox = document.getElementById('photo-error-box');
+    if (errBox) {
+      errBox.style.display = 'block';
+      errBox.textContent = 'Camera stream not available. You can upload an existing photo.';
+    }
+  }
+}
+
+function closePhotoIdentifyModal() {
+  if (photoStream) {
+    photoStream.getTracks().forEach((t) => t.stop());
+    photoStream = null;
+  }
+  const modal = document.getElementById('photo-identify-modal');
+  if (modal) modal.style.display = 'none';
+}
+
+async function capturePhotoSnapshot(barcode = '') {
+  const video = document.getElementById('photo-video-preview');
+  const canvas = document.getElementById('photo-capture-canvas');
+  if (!video || !canvas) return;
+
+  canvas.width = video.videoWidth || 640;
+  canvas.height = video.videoHeight || 480;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+  const base64Data = canvas.toDataURL('image/jpeg', 0.85);
+
+  submitPhotoForIdentification(base64Data, barcode);
+}
+
+function handlePhotoFileSelected(e, barcode = '') {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    const base64 = ev.target && ev.target.result;
+    if (base64) {
+      submitPhotoForIdentification(base64, barcode);
+    }
+  };
+  reader.readAsDataURL(file);
+}
+
+async function submitPhotoForIdentification(imageBase64, barcode = '') {
+  const overlay = document.getElementById('photo-loading-overlay');
+  const errBox = document.getElementById('photo-error-box');
+  if (overlay) overlay.style.display = 'flex';
+  if (errBox) errBox.style.display = 'none';
+
+  try {
+    const res = await fetch('/api/barcode/photo-identify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ imageBase64, barcode: barcode || undefined }),
+    });
+
+    if (!res.ok) {
+      throw new Error(`Photo identification endpoint returned error (${res.status})`);
+    }
+
+    const data = await res.json();
+    if (data.found && (data.productName || data.brand)) {
+      closePhotoIdentifyModal();
+      const productResult = {
+        barcode: barcode || 'PHOTO_ID',
+        found: true,
+        rawText: data.rawText || '',
+        brand: data.brand,
+        productName: data.productName,
+        category: data.category,
+        description: data.description,
+        imageUrl: imageBase64,
+        source: 'photo_identification',
+        foundViaLabel: 'Identified from photo — verify details independently',
+        confidence: data.confidence,
+        isPhotoId: true,
+        manufacturer: data.manufacturer,
+        sources: [],
+      };
+
+      recordScanInHistory({
+        barcode: barcode || 'PHOTO_ID',
+        source: 'photo_identification',
+        productName: productResult.productName,
+        brand: productResult.brand,
+        imageUrl: imageBase64,
+        cachedData: productResult,
+      });
+
+      renderGeminiProductView(productResult);
+    } else {
+      if (overlay) overlay.style.display = 'none';
+      if (errBox) {
+        errBox.style.display = 'block';
+        errBox.textContent = 'Could not identify this product from the photo with confidence. Please try taking a clearer photo showing the front brand and product label.';
+      }
+    }
+  } catch (err) {
+    if (overlay) overlay.style.display = 'none';
+    if (errBox) {
+      errBox.style.display = 'block';
+      errBox.textContent = err.message || 'Failed to analyze photo. Check your connection.';
+    }
+  }
+}
+
+/**
  * Handle product not found in Open Food Facts database.
- * Calls Gemini API with Google Search Grounding tool enabled to lookup non-food items
- * (electronics, household goods, cosmetics, etc.) or unknown products.
+ * Executes the sequential lookup chain:
+ * 1. UPCItemDB (/api/barcode/upcitemdb) -> general retail, electronics, household, toys, books
+ * 2. Gemini Search Grounding (/api/barcode/gemini) -> live web search
+ * 3. Terminal state evaluation:
+ *    - Service reachability error -> "Couldn't reach the lookup service, check your connection and retry"
+ *    - All sources empty -> "No information found for this barcode" + "Try a photo instead" button
  */
 async function handleProductNotFound(code) {
   const cleanCode = String(code).trim();
-  console.log(`[Open Food Facts] Barcode ${cleanCode} not in food database. Calling Gemini Search Grounding fallback...`);
+  console.log(`[Lookup Chain] Open Food Facts missed barcode ${cleanCode}. Commencing sequential chain...`);
 
-  // Show searching status
-  renderGeminiSearching(cleanCode);
+  let anyServiceResponded = false;
+  let lastNetworkError = null;
 
-  // Exact framing specified by user instructions to prevent invented data
-  const exactPrompt = `Look up the product associated with barcode ${cleanCode} using web search.
-Report only information you find in search results — brand, product
-name, category, typical price range, and a two-sentence description.
-If search returns nothing reliable for this exact barcode, say clearly
-that no verified product information was found. Do not guess or infer
-a product from the barcode number pattern alone.`;
-
+  // Step 2: UPCItemDB
+  renderGeminiSearching(cleanCode, 'Checking UPCItemDB retail catalog...');
   try {
-    const response = await fetch('/api/barcode/gemini', {
+    const upcRes = await fetch('/api/barcode/upcitemdb', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      },
-      body: JSON.stringify({ barcode: cleanCode, prompt: exactPrompt }),
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ barcode: cleanCode }),
     });
 
-    if (!response.ok) {
-      throw new Error(`Gemini lookup endpoint returned ${response.status}`);
-    }
+    if (upcRes.ok) {
+      anyServiceResponded = true;
+      const upcData = await upcRes.json();
 
-    const data = await response.json();
+      if (upcData.found && (upcData.productName || upcData.brand)) {
+        const itemResult = {
+          barcode: cleanCode,
+          found: true,
+          rawText: upcData.description || `${upcData.brand || ''} ${upcData.productName || ''}`,
+          brand: upcData.brand,
+          productName: upcData.productName,
+          category: upcData.category,
+          priceRange: upcData.lowestPrice && upcData.highestPrice ? `$${upcData.lowestPrice} – $${upcData.highestPrice}` : upcData.lowestPrice ? `From $${upcData.lowestPrice}` : undefined,
+          description: upcData.description,
+          imageUrl: upcData.imageUrl,
+          images: upcData.images,
+          source: 'upcitemdb',
+          foundViaLabel: 'Found via: UPCItemDB',
+          manufacturer: upcData.manufacturer,
+          sources: [
+            {
+              title: 'UPCItemDB Product Database',
+              url: `https://www.upcitemdb.com/upc/${encodeURIComponent(cleanCode)}`,
+            },
+          ],
+        };
 
-    if (data.found && (data.productName || data.brand || data.rawText)) {
-      recordScanInHistory({
-        barcode: cleanCode,
-        source: 'gemini_fallback',
-        productName: data.productName || 'Web Product Search Result',
-        brand: data.brand,
-        cachedData: data,
-      });
-      renderGeminiProductView(data);
+        recordScanInHistory({
+          barcode: cleanCode,
+          source: 'upcitemdb',
+          productName: itemResult.productName,
+          brand: itemResult.brand,
+          imageUrl: itemResult.imageUrl,
+          cachedData: itemResult,
+        });
+
+        renderGeminiProductView(itemResult);
+        return;
+      }
     } else {
-      recordScanInHistory({
-        barcode: cleanCode,
-        source: 'not_found',
-        productName: 'Product Not Found',
-        cachedData: null,
-      });
-      renderGeminiNotFoundView(cleanCode);
+      const errData = await upcRes.json().catch(() => ({}));
+      if (errData.isNetworkError) {
+        lastNetworkError = errData.error || 'UPCItemDB service network error';
+      } else {
+        anyServiceResponded = true;
+      }
     }
   } catch (err) {
-    console.warn('Gemini search grounding lookup error:', err);
-    recordScanInHistory({
-      barcode: cleanCode,
-      source: 'not_found',
-      productName: 'Product Not Found',
-      cachedData: null,
-    });
-    renderGeminiNotFoundView(cleanCode);
+    console.warn('UPCItemDB step error:', err);
+    lastNetworkError = err.message || 'UPCItemDB service unreachable';
   }
+
+  // Step 3: Gemini Search Grounding
+  renderGeminiSearching(cleanCode, 'Searching live web with Gemini AI...');
+  try {
+    const geminiRes = await fetch('/api/barcode/gemini', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ barcode: cleanCode }),
+    });
+
+    if (geminiRes.ok) {
+      anyServiceResponded = true;
+      const geminiData = await geminiRes.json();
+
+      if (geminiData.found && (geminiData.productName || geminiData.brand)) {
+        const itemResult = {
+          barcode: cleanCode,
+          found: true,
+          rawText: geminiData.rawText || '',
+          brand: geminiData.brand,
+          productName: geminiData.productName,
+          category: geminiData.category,
+          priceRange: geminiData.priceRange,
+          description: geminiData.description,
+          source: 'web_search',
+          foundViaLabel: 'Found via: Web search',
+          manufacturer: geminiData.manufacturer,
+          sources: geminiData.sources || [],
+        };
+
+        recordScanInHistory({
+          barcode: cleanCode,
+          source: 'web_search',
+          productName: itemResult.productName,
+          brand: itemResult.brand,
+          cachedData: itemResult,
+        });
+
+        renderGeminiProductView(itemResult);
+        return;
+      }
+    } else {
+      const errData = await geminiRes.json().catch(() => ({}));
+      if (errData.isNetworkError) {
+        lastNetworkError = errData.error || 'Web search service network error';
+      } else {
+        anyServiceResponded = true;
+      }
+    }
+  } catch (err) {
+    console.warn('Gemini search step error:', err);
+    lastNetworkError = err.message || 'Web search network error';
+  }
+
+  // Evaluate failure mode:
+  // If NO service could be reached at all, show explicit Network failure
+  if (!anyServiceResponded && (!navigator.onLine || lastNetworkError)) {
+    renderNetworkError(cleanCode, "Couldn't reach the lookup service, check your connection and retry");
+    return;
+  }
+
+  // Otherwise, all sources completed and returned no match!
+  recordScanInHistory({
+    barcode: cleanCode,
+    source: 'not_found',
+    productName: 'Product Not Found',
+    cachedData: null,
+  });
+
+  renderGeminiNotFoundView(cleanCode);
 }
 
 /**

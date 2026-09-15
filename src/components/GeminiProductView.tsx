@@ -11,6 +11,8 @@ import {
   Layers,
   FileText,
   Star,
+  Camera,
+  ShoppingBag,
 } from 'lucide-react';
 import { GeminiProductResult, UserDietaryProfile } from '../types';
 import { checkGeminiResultAgainstProfile } from '../utils/allergenChecker';
@@ -41,6 +43,7 @@ export const GeminiProductView: React.FC<GeminiProductViewProps> = ({
   onOpenSettings,
 }) => {
   const [copied, setCopied] = useState(false);
+  const [imageError, setImageError] = useState(false);
 
   const allergenCheck = useMemo(
     () => checkGeminiResultAgainstProfile(result, userProfile),
@@ -58,43 +61,87 @@ export const GeminiProductView: React.FC<GeminiProductViewProps> = ({
     }
   };
 
-  const displayName = result.productName || 'Web Product Search Result';
+  const displayName = result.productName || 'Product Result';
   const displayBrand = result.brand || 'Unspecified Brand';
+
+  const isPhotoId = result.source === 'photo_identification' || result.isPhotoId;
+  const isUpcItemDb = result.source === 'upcitemdb';
 
   return (
     <div
       id="gemini-product-detail-view"
       className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-3xl p-5 shadow-2xl space-y-5 animate-in fade-in zoom-in-95 duration-200"
     >
-      {/* ⚠️ Allergen & Dietary Banner: Shows red warning if text contains matched allergens, or neutral notice if unverified */}
+      {/* ⚠️ Allergen & Dietary Banner */}
       <AllergenAlertBanner
         result={allergenCheck}
         onOpenSettings={onOpenSettings}
       />
 
       {/* Distinct Source Badge required by prompt */}
-      <div
-        id="badge-web-search-source"
-        className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-sky-500/10 border border-sky-500/30 text-sky-300 text-xs font-semibold text-center tracking-tight shadow-sm"
-      >
-        <Globe className="w-4 h-4 shrink-0 text-sky-400" />
-        <span>Found via web search — not in our verified product database</span>
-      </div>
+      {isPhotoId ? (
+        <div
+          id="badge-photo-source"
+          className="w-full flex items-start gap-2.5 py-2.5 px-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-semibold tracking-tight shadow-sm"
+        >
+          <Camera className="w-4 h-4 shrink-0 text-amber-400 mt-0.5" />
+          <div className="text-left">
+            <p className="font-bold">Identified from photo — verify details independently</p>
+            <p className="text-[11px] font-normal text-amber-400/90 mt-0.5">
+              Visual AI identification has lower certainty than barcode database records.
+            </p>
+          </div>
+        </div>
+      ) : isUpcItemDb ? (
+        <div
+          id="badge-upcitemdb-source"
+          className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-purple-500/10 border border-purple-500/30 text-purple-300 text-xs font-semibold text-center tracking-tight shadow-sm"
+        >
+          <ShoppingBag className="w-4 h-4 shrink-0 text-purple-400" />
+          <span>Found via: UPCItemDB Retail Database</span>
+        </div>
+      ) : (
+        <div
+          id="badge-web-search-source"
+          className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-sky-500/10 border border-sky-500/30 text-sky-300 text-xs font-semibold text-center tracking-tight shadow-sm"
+        >
+          <Globe className="w-4 h-4 shrink-0 text-sky-400" />
+          <span>Found via: Web search — not in verified database</span>
+        </div>
+      )}
 
       {/* Top Bar: Barcode pill & Scan Another */}
       <div className="flex items-center justify-between gap-2 pb-3 border-b border-zinc-800/80">
-        <button
-          onClick={handleCopyCode}
-          className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-zinc-950 hover:bg-zinc-800 border border-zinc-800 text-xs font-mono text-zinc-300 transition-colors cursor-pointer"
-          title="Click to copy barcode"
-        >
-          {copied ? (
-            <Check className="w-3.5 h-3.5 text-emerald-400" />
-          ) : (
-            <Copy className="w-3.5 h-3.5 text-zinc-500" />
-          )}
-          <span>{result.barcode}</span>
-        </button>
+        <div className="flex items-center gap-2 overflow-hidden flex-wrap">
+          <button
+            onClick={handleCopyCode}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-zinc-950 hover:bg-zinc-800 border border-zinc-800 text-xs font-mono text-zinc-300 transition-colors cursor-pointer"
+            title="Click to copy barcode"
+          >
+            {copied ? (
+              <Check className="w-3.5 h-3.5 text-emerald-400" />
+            ) : (
+              <Copy className="w-3.5 h-3.5 text-zinc-500" />
+            )}
+            <span>{result.barcode}</span>
+          </button>
+          <span
+            className={`px-2 py-0.5 rounded-md text-[10px] font-medium whitespace-nowrap border ${
+              isPhotoId
+                ? 'bg-amber-500/10 border-amber-500/20 text-amber-400'
+                : isUpcItemDb
+                ? 'bg-purple-500/10 border-purple-500/20 text-purple-400'
+                : 'bg-sky-500/10 border-sky-500/20 text-sky-400'
+            }`}
+          >
+            {result.foundViaLabel ||
+              (isPhotoId
+                ? 'Photo Identification'
+                : isUpcItemDb
+                ? 'UPCItemDB'
+                : 'Web search')}
+          </span>
+        </div>
 
         <div className="flex items-center gap-2 shrink-0">
           {onToggleFavorite && (
@@ -123,7 +170,13 @@ export const GeminiProductView: React.FC<GeminiProductViewProps> = ({
           <button
             id="btn-scan-another-gemini-top"
             onClick={onScanAnother}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold transition-colors shadow-sm cursor-pointer shrink-0"
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-white text-xs font-semibold transition-colors shadow-sm cursor-pointer shrink-0 ${
+              isPhotoId
+                ? 'bg-amber-600 hover:bg-amber-500'
+                : isUpcItemDb
+                ? 'bg-purple-600 hover:bg-purple-500'
+                : 'bg-sky-600 hover:bg-sky-500'
+            }`}
           >
             <RefreshCw className="w-3.5 h-3.5" />
             <span>Scan Another</span>
@@ -133,13 +186,49 @@ export const GeminiProductView: React.FC<GeminiProductViewProps> = ({
 
       {/* Hero Header */}
       <div className="flex gap-4 items-start">
-        <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl bg-zinc-950 border border-zinc-800 flex flex-col items-center justify-center text-sky-400 shrink-0 p-2 text-center shadow-inner">
-          <Package className="w-9 h-9 text-sky-400/90 mb-1" />
-          <span className="text-[9px] font-mono text-zinc-500 uppercase">Product</span>
-        </div>
+        {result.imageUrl && !imageError ? (
+          <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl bg-zinc-950 border border-zinc-800 overflow-hidden shrink-0 flex items-center justify-center p-1 relative shadow-inner">
+            <img
+              src={result.imageUrl}
+              alt={displayName}
+              referrerPolicy="no-referrer"
+              onError={() => setImageError(true)}
+              className="w-full h-full object-contain rounded-xl"
+            />
+          </div>
+        ) : (
+          <div
+            className={`w-20 h-20 sm:w-24 sm:h-24 rounded-2xl bg-zinc-950 border border-zinc-800 flex flex-col items-center justify-center shrink-0 p-2 text-center shadow-inner ${
+              isPhotoId
+                ? 'text-amber-400'
+                : isUpcItemDb
+                ? 'text-purple-400'
+                : 'text-sky-400'
+            }`}
+          >
+            {isPhotoId ? (
+              <Camera className="w-9 h-9 text-amber-400/90 mb-1" />
+            ) : isUpcItemDb ? (
+              <ShoppingBag className="w-9 h-9 text-purple-400/90 mb-1" />
+            ) : (
+              <Package className="w-9 h-9 text-sky-400/90 mb-1" />
+            )}
+            <span className="text-[9px] font-mono text-zinc-500 uppercase">
+              {isPhotoId ? 'Photo' : 'Product'}
+            </span>
+          </div>
+        )}
 
         <div className="flex-1 min-w-0">
-          <p className="text-xs font-semibold uppercase tracking-wider text-sky-400 truncate">
+          <p
+            className={`text-xs font-semibold uppercase tracking-wider truncate ${
+              isPhotoId
+                ? 'text-amber-400'
+                : isUpcItemDb
+                ? 'text-purple-400'
+                : 'text-sky-400'
+            }`}
+          >
             {displayBrand}
           </p>
           <h2 className="text-lg font-bold text-zinc-100 leading-snug break-words">

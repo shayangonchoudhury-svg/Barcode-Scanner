@@ -346,6 +346,8 @@ export async function fetchOpenFoodFactsProduct(
       novaGroup: p.nova_group !== undefined ? Number(p.nova_group) : undefined,
       ecoscoreGrade: p.ecoscore_grade || undefined,
       servingSize: p.serving_size || undefined,
+      lookupSource: 'openfoodfacts',
+      foundViaLabel: 'Found via: Open Food Facts',
       manufacturer: manufacturerInfo,
       nutriments: {
         energyKcal100g: nutriments['energy-kcal_100g'] ?? nutriments['energy-kcal_value'] ?? null,
