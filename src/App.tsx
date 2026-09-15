@@ -601,7 +601,13 @@ export default function App() {
 
                 {/* Camera Viewport or Manual Form */}
                 {activeTab === 'camera' ? (
-                  <CameraScanner onBarcodeDetected={handleBarcodeDetected} />
+                  <CameraScanner
+                    onBarcodeDetected={handleBarcodeDetected}
+                    onSelectManual={() => setActiveTab('manual')}
+                    onSelectPhotoId={() => setIsPhotoModalOpen(true)}
+                    soundEnabled={soundEnabled}
+                    vibrateEnabled={vibrateEnabled}
+                  />
                 ) : (
                   <ManualEntryForm onSubmitBarcode={(code) => handleBarcodeDetected(code, 'manual', 'manual')} />
                 )}

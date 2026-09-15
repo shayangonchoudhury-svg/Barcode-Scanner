@@ -14,14 +14,78 @@ interface CameraScannerProps {
   onDetected?: (code: string, format: string, source: 'native' | 'html5-qrcode') => void;
   onBarcodeDetected?: (code: string, format: string, source: 'native' | 'html5-qrcode') => void;
   onSelectManual?: () => void;
+  onSelectPhotoId?: () => void;
   soundEnabled?: boolean;
   vibrateEnabled?: boolean;
+}
+
+export function parseCameraError(err: unknown): {
+  type: 'denied' | 'not_found' | 'in_use' | 'unknown';
+  message: string;
+} {
+  const errStr =
+    typeof err === 'string'
+      ? err
+      : err instanceof Error
+      ? `${err.name}: ${err.message}`
+      : String(err);
+  const lower = errStr.toLowerCase();
+
+  const isDenied =
+    lower.includes('notallowederror') ||
+    lower.includes('permission denied') ||
+    lower.includes('permission_denied') ||
+    lower.includes('permissiondeniederror') ||
+    (err as any)?.name === 'NotAllowedError' ||
+    (err as any)?.name === 'PermissionDeniedError';
+
+  if (isDenied) {
+    return {
+      type: 'denied',
+      message: 'Camera permission was denied or not yet granted. Please allow camera access in your browser or enter the code manually.',
+    };
+  }
+
+  const isNotFound =
+    lower.includes('notfounderror') ||
+    lower.includes('devicesnotfounderror') ||
+    lower.includes('no camera') ||
+    lower.includes('no video') ||
+    (err as any)?.name === 'NotFoundError' ||
+    (err as any)?.name === 'DevicesNotFoundError';
+
+  if (isNotFound) {
+    return {
+      type: 'not_found',
+      message: 'No camera device found on this device or system.',
+    };
+  }
+
+  const isInUse =
+    lower.includes('notreadableerror') ||
+    lower.includes('trackstarterror') ||
+    lower.includes('in use') ||
+    (err as any)?.name === 'NotReadableError' ||
+    (err as any)?.name === 'TrackStartError';
+
+  if (isInUse) {
+    return {
+      type: 'in_use',
+      message: 'Camera is currently in use by another tab or app.',
+    };
+  }
+
+  return {
+    type: 'unknown',
+    message: (err as any)?.message || errStr || 'Unable to access the camera.',
+  };
 }
 
 export const CameraScanner: React.FC<CameraScannerProps> = ({
   onDetected,
   onBarcodeDetected,
   onSelectManual,
+  onSelectPhotoId,
   soundEnabled = true,
   vibrateEnabled = true,
 }) => {
@@ -34,6 +98,7 @@ export const CameraScanner: React.FC<CameraScannerProps> = ({
   const [facingMode, setFacingMode] = useState<'environment' | 'user'>('environment');
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   const html5QrCodeRef = useRef<Html5Qrcode | null>(null);
@@ -241,7 +306,12 @@ export const CameraScanner: React.FC<CameraScannerProps> = ({
       isScanningRef.current = true;
       setStatus('scanning');
     } catch (err: unknown) {
-      console.error('html5-qrcode fallback initialization error:', err);
+      const parsed = parseCameraError(err);
+      if (parsed.type === 'denied') {
+        console.warn('html5-qrcode camera access was not granted:', err);
+      } else {
+        console.warn('html5-qrcode initialization notice:', err);
+      }
       throw err;
     }
   }, [facingMode, handleSuccess]);
@@ -266,32 +336,26 @@ export const CameraScanner: React.FC<CameraScannerProps> = ({
         await startHtml5QrcodeScanner();
       }
     } catch (err: unknown) {
-      console.error('Camera initialization failed:', err);
-      const error = err as { name?: string; message?: string };
+      const parsed = parseCameraError(err);
 
-      if (
-        error.name === 'NotAllowedError' ||
-        error.name === 'PermissionDeniedError'
-      ) {
+      if (parsed.type === 'denied') {
+        console.warn('Camera access denied or dismissed by user:', parsed.message);
         setErrorType('denied');
         setStatus('permission_denied');
-      } else if (
-        error.name === 'NotFoundError' ||
-        error.name === 'DevicesNotFoundError'
-      ) {
+      } else if (parsed.type === 'not_found') {
+        console.warn('Camera device not found:', parsed.message);
         setErrorType('not_found');
-        setErrorMessage('No camera found on this device.');
+        setErrorMessage(parsed.message);
         setStatus('error');
-      } else if (
-        error.name === 'NotReadableError' ||
-        error.name === 'TrackStartError'
-      ) {
+      } else if (parsed.type === 'in_use') {
+        console.warn('Camera in use by another application:', parsed.message);
         setErrorType('in_use');
-        setErrorMessage('Camera is currently in use by another tab or app.');
+        setErrorMessage(parsed.message);
         setStatus('error');
       } else {
+        console.warn('Camera initialization could not start video stream:', err);
         setErrorType('unknown');
-        setErrorMessage(error.message || 'Unable to access the camera.');
+        setErrorMessage(parsed.message);
         setStatus('error');
       }
     }
@@ -328,11 +392,64 @@ export const CameraScanner: React.FC<CameraScannerProps> = ({
     setFacingMode((prev) => (prev === 'environment' ? 'user' : 'environment'));
   };
 
+  // Decode barcode from image file fallback
+  const handleUploadClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setStatus('initializing');
+    try {
+      const Html5QrcodeClass =
+        (typeof Html5Qrcode !== 'undefined' && Html5Qrcode) ||
+        (window as unknown as { Html5Qrcode: typeof Html5Qrcode }).Html5Qrcode;
+
+      if (!Html5QrcodeClass) {
+        throw new Error('Barcode decoder library not loaded');
+      }
+
+      const tempScanner = new Html5QrcodeClass('html5qr-file-scanner-mount', {
+        verbose: false,
+      });
+
+      const decodedText = await tempScanner.scanFile(file, false);
+      await tempScanner.clear();
+
+      handleSuccess(decodedText, 'image-file', 'html5-qrcode');
+    } catch (scanErr) {
+      console.warn('Barcode decoding from image file failed:', scanErr);
+      if (onSelectPhotoId) {
+        onSelectPhotoId();
+      } else {
+        setErrorType('unknown');
+        setErrorMessage('Could not find a clear barcode in that image. Try entering the code numbers manually.');
+        setStatus('error');
+      }
+    } finally {
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  };
+
   return (
     <div
       id="camera-scanner-viewport"
       className="relative w-full h-[360px] sm:h-[420px] bg-black rounded-3xl overflow-hidden shadow-2xl border border-zinc-800 flex items-center justify-center"
     >
+      {/* Hidden file input for barcode image upload fallback */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleFileChange}
+      />
+      <div id="html5qr-file-scanner-mount" className="hidden" />
+
       {/* 1. Permission Denied / Error State */}
       {(status === 'permission_denied' || status === 'error') && (
         <CameraPermissionPrompt
@@ -340,6 +457,8 @@ export const CameraScanner: React.FC<CameraScannerProps> = ({
           errorMessage={errorMessage}
           onRetry={startCamera}
           onSelectManual={onSelectManual}
+          onUploadImage={handleUploadClick}
+          onSelectPhotoId={onSelectPhotoId}
         />
       )}
 

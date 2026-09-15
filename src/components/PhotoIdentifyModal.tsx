@@ -1,12 +1,20 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Camera, RefreshCw, X, AlertTriangle, Upload, Sparkles } from 'lucide-react';
+import { Camera, RefreshCw, X, AlertTriangle, Upload, Sparkles, Terminal } from 'lucide-react';
 import { GeminiProductResult } from '../types';
+import { handleVisualIdentification, VisualIdentificationError } from '../utils/scanner';
 
 interface PhotoIdentifyModalProps {
   isOpen: boolean;
   barcode?: string;
   onClose: () => void;
   onIdentified: (result: GeminiProductResult) => void;
+}
+
+interface PhotoIdentificationErrorState {
+  status?: number;
+  endpoint?: string;
+  responseBody?: string;
+  message: string;
 }
 
 export const PhotoIdentifyModal: React.FC<PhotoIdentifyModalProps> = ({
@@ -23,7 +31,7 @@ export const PhotoIdentifyModal: React.FC<PhotoIdentifyModalProps> = ({
   const [cameraActive, setCameraActive] = useState(false);
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [errorDetails, setErrorDetails] = useState<PhotoIdentificationErrorState | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
 
   // Start camera when modal opens
@@ -31,7 +39,7 @@ export const PhotoIdentifyModal: React.FC<PhotoIdentifyModalProps> = ({
     if (!isOpen) {
       stopCamera();
       setCapturedImage(null);
-      setAnalysisError(null);
+      setErrorDetails(null);
       return;
     }
 
@@ -118,27 +126,14 @@ export const PhotoIdentifyModal: React.FC<PhotoIdentifyModalProps> = ({
 
   async function sendPhotoForIdentification(imageBase64: string) {
     setIsAnalyzing(true);
-    setAnalysisError(null);
+    setErrorDetails(null);
 
     try {
-      const res = await fetch('/api/barcode/photo-identify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          imageBase64,
-          barcode: barcode || undefined,
-        }),
-      });
-
-      if (!res.ok) {
-        throw new Error(`Photo identification service returned error (${res.status})`);
-      }
-
-      const data = await res.json();
+      const data = await handleVisualIdentification(imageBase64, barcode);
 
       if (data.found && (data.productName || data.brand)) {
         const result: GeminiProductResult = {
-          barcode: barcode || 'PHOTO_ID',
+          barcode: barcode || data.barcode || 'PHOTO_ID',
           found: true,
           rawText: data.rawText || '',
           brand: data.brand,
@@ -147,7 +142,7 @@ export const PhotoIdentifyModal: React.FC<PhotoIdentifyModalProps> = ({
           description: data.description,
           imageUrl: imageBase64,
           source: 'photo_identification',
-          foundViaLabel: 'Identified from photo — verify details independently',
+          foundViaLabel: data.foundViaLabel || 'Identified from photo — verify details independently',
           confidence: data.confidence,
           isPhotoId: true,
           manufacturer: data.manufacturer,
@@ -157,13 +152,34 @@ export const PhotoIdentifyModal: React.FC<PhotoIdentifyModalProps> = ({
         onIdentified(result);
         onClose();
       } else {
-        setAnalysisError(
-          'Could not identify this product from the photo with reasonable confidence. Please try taking a clearer photo showing the front brand name and label.'
-        );
+        setErrorDetails({
+          message:
+            'Could not identify this product from the photo with reasonable confidence. Please try taking a clearer photo showing the front brand name and label.',
+        });
       }
     } catch (err: any) {
-      console.error('Photo identification request error:', err);
-      setAnalysisError(err.message || 'Failed to analyze photo. Check your network connection.');
+      console.error('Photo visual identification failed with details:', {
+        httpStatus: err.httpStatus || err.status,
+        endpoint: err.endpointUrl || err.endpoint,
+        rawResponseBody: err.rawResponseText || err.responseBody,
+        message: err.message,
+      });
+
+      if (err instanceof VisualIdentificationError) {
+        setErrorDetails({
+          status: err.httpStatus,
+          endpoint: err.endpointUrl,
+          responseBody: err.rawResponseText,
+          message: err.message,
+        });
+      } else {
+        setErrorDetails({
+          status: err.status || err.httpStatus,
+          endpoint: err.endpoint || err.endpointUrl || '/api/barcode/photo-identify',
+          responseBody: err.rawResponseText || err.responseBody || err.toString(),
+          message: err.message || 'Failed to analyze photo. Check your network connection.',
+        });
+      }
     } finally {
       setIsAnalyzing(false);
     }
@@ -171,7 +187,7 @@ export const PhotoIdentifyModal: React.FC<PhotoIdentifyModalProps> = ({
 
   function handleRetake() {
     setCapturedImage(null);
-    setAnalysisError(null);
+    setErrorDetails(null);
     startCamera();
   }
 
@@ -182,7 +198,7 @@ export const PhotoIdentifyModal: React.FC<PhotoIdentifyModalProps> = ({
       id="photo-identify-modal"
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm animate-in fade-in"
     >
-      <div className="relative w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
+      <div className="relative w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[92vh]">
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-zinc-800/80 bg-zinc-950/40">
           <div className="flex items-center gap-2">
@@ -191,7 +207,7 @@ export const PhotoIdentifyModal: React.FC<PhotoIdentifyModalProps> = ({
             </div>
             <div>
               <h3 className="text-sm font-bold text-white">Visual Identification</h3>
-              <p className="text-[11px] text-zinc-400">Photo mode fallback</p>
+              <p className="text-[11px] text-zinc-400">Multimodal photo fallback</p>
             </div>
           </div>
           <button
@@ -208,70 +224,107 @@ export const PhotoIdentifyModal: React.FC<PhotoIdentifyModalProps> = ({
           <span>Point at the product label, brand logo, or front packaging text.</span>
         </div>
 
-        {/* Viewport Area */}
-        <div className="relative aspect-4/3 bg-black flex items-center justify-center overflow-hidden">
-          {capturedImage ? (
-            <img
-              src={capturedImage}
-              alt="Captured product snapshot"
-              className="w-full h-full object-cover"
+        {/* Scrollable middle container */}
+        <div className="overflow-y-auto flex-1">
+          {/* Viewport Area */}
+          <div className="relative aspect-4/3 bg-black flex items-center justify-center overflow-hidden">
+            {capturedImage ? (
+              <img
+                src={capturedImage}
+                alt="Captured product snapshot"
+                className="w-full h-full object-cover"
+              />
+            ) : (
+              <video
+                ref={videoRef}
+                playsInline
+                muted
+                className="w-full h-full object-cover"
+              />
+            )}
+
+            {/* Hidden Canvas for snapshot extraction */}
+            <canvas ref={canvasRef} className="hidden" />
+
+            {/* Hidden file input */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              className="hidden"
+              onChange={handleFileSelected}
             />
-          ) : (
-            <video
-              ref={videoRef}
-              playsInline
-              muted
-              className="w-full h-full object-cover"
-            />
-          )}
 
-          {/* Hidden Canvas for snapshot extraction */}
-          <canvas ref={canvasRef} className="hidden" />
-
-          {/* Hidden file input */}
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            capture="environment"
-            className="hidden"
-            onChange={handleFileSelected}
-          />
-
-          {/* Analysis Overlay */}
-          {isAnalyzing && (
-            <div className="absolute inset-0 bg-black/75 backdrop-blur-xs flex flex-col items-center justify-center p-4 text-center">
-              <div className="w-12 h-12 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 mb-3 animate-pulse">
-                <Sparkles className="w-6 h-6 animate-spin" />
+            {/* Analysis Overlay */}
+            {isAnalyzing && (
+              <div className="absolute inset-0 bg-black/80 backdrop-blur-xs flex flex-col items-center justify-center p-4 text-center">
+                <div className="w-12 h-12 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 mb-3 animate-pulse">
+                  <Sparkles className="w-6 h-6 animate-spin" />
+                </div>
+                <p className="text-sm font-bold text-white mb-1">Analyzing packaging with Gemini Vision...</p>
+                <p className="text-xs text-zinc-400">Reading text, brand logos, and product packaging</p>
               </div>
-              <p className="text-sm font-bold text-white mb-1">Analyzing packaging with Gemini Vision...</p>
-              <p className="text-xs text-zinc-400">Reading text, brand logos, and product shape</p>
-            </div>
-          )}
+            )}
 
-          {/* Camera Error State */}
-          {cameraError && !capturedImage && (
-            <div className="absolute inset-0 bg-zinc-950 p-6 flex flex-col items-center justify-center text-center">
-              <Camera className="w-8 h-8 text-zinc-600 mb-2" />
-              <p className="text-xs text-zinc-300 mb-3">{cameraError}</p>
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-xs font-semibold flex items-center gap-2"
-              >
-                <Upload className="w-4 h-4" />
-                Select Photo from Library
-              </button>
+            {/* Camera Error State */}
+            {cameraError && !capturedImage && (
+              <div className="absolute inset-0 bg-zinc-950 p-6 flex flex-col items-center justify-center text-center">
+                <Camera className="w-8 h-8 text-zinc-600 mb-2" />
+                <p className="text-xs text-zinc-300 mb-3">{cameraError}</p>
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-xs font-semibold flex items-center gap-2"
+                >
+                  <Upload className="w-4 h-4" />
+                  Select Photo from Library
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Diagnostic Error Notification */}
+          {errorDetails && (
+            <div className="p-3.5 mx-4 mt-3 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 font-semibold text-rose-200">
+                  <AlertTriangle className="w-4 h-4 text-rose-400" />
+                  <span>Photo Identification Error</span>
+                </div>
+                {errorDetails.status ? (
+                  <span className="px-2 py-0.5 rounded-md bg-rose-500/20 text-rose-200 font-mono text-[11px] font-bold border border-rose-500/40">
+                    HTTP {errorDetails.status}
+                  </span>
+                ) : (
+                  <span className="px-2 py-0.5 rounded-md bg-zinc-800 text-zinc-400 font-mono text-[10px]">
+                    Connection / Local
+                  </span>
+                )}
+              </div>
+
+              <p className="text-rose-200 font-medium">{errorDetails.message}</p>
+
+              {errorDetails.endpoint && (
+                <div className="text-[11px] text-zinc-400 font-mono bg-black/40 px-2 py-1 rounded-md">
+                  <span className="text-zinc-500">Target Endpoint: </span>
+                  <span className="text-zinc-300">{errorDetails.endpoint}</span>
+                </div>
+              )}
+
+              {errorDetails.responseBody && (
+                <div className="mt-1 flex flex-col gap-1">
+                  <div className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-zinc-400 font-bold">
+                    <Terminal className="w-3 h-3 text-zinc-500" />
+                    <span>Raw API Response Body:</span>
+                  </div>
+                  <pre className="p-2.5 rounded-xl bg-zinc-950/90 border border-rose-500/20 text-[11px] text-zinc-300 font-mono overflow-x-auto whitespace-pre-wrap max-h-36 select-all">
+                    {errorDetails.responseBody}
+                  </pre>
+                </div>
+              )}
             </div>
           )}
         </div>
-
-        {/* Analysis Error Notification */}
-        {analysisError && (
-          <div className="p-3 mx-4 mt-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs">
-            <p className="font-semibold mb-1">Identification Unsuccessful</p>
-            <p>{analysisError}</p>
-          </div>
-        )}
 
         {/* Bottom Actions */}
         <div className="p-4 flex items-center justify-between gap-3 bg-zinc-950/60 border-t border-zinc-800/80">

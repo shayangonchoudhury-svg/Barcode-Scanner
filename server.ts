@@ -341,7 +341,8 @@ Format the output strictly as:
 
 /**
  * Visual Photo Identification Endpoint (User Requirement #4)
- * Multimodal visual identification using Gemini without search grounding.
+ * Multimodal visual identification using Gemini.
+ * Model: 'gemini-flash-latest' (with automatic fallback to 'gemini-3.8-flash').
  * Prompt:
  * "Identify this product from the image. Report the brand, product name, and category
  * if you can determine them from what's visible in the photo — text on the packaging,
@@ -352,13 +353,19 @@ async function handlePhotoIdentify(req: express.Request, res: express.Response) 
   try {
     const { imageBase64, mimeType = 'image/jpeg', barcode } = req.body;
     if (!imageBase64 || typeof imageBase64 !== 'string') {
-      return res.status(400).json({ error: 'imageBase64 parameter is required' });
+      return res.status(400).json({
+        error: 'imageBase64 parameter is required in JSON payload',
+        status: 400,
+        endpoint: req.originalUrl,
+      });
     }
 
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
       return res.status(500).json({
-        error: 'GEMINI_API_KEY is not set. Please configure it in AI Studio settings.',
+        error: 'GEMINI_API_KEY environment variable is not configured. Please set it in AI Studio settings.',
+        status: 500,
+        endpoint: req.originalUrl,
       });
     }
 
@@ -383,20 +390,46 @@ Please format your response strictly as:
 - Description: [Clear two-sentence visual description of what is visible on the package]
 - Confidence: [High / Medium / Low / None]`;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
-      contents: [
-        {
-          inlineData: {
-            mimeType: mimeType || 'image/jpeg',
-            data: base64Clean,
-          },
-        },
-        {
-          text: photoPrompt,
-        },
-      ],
-    });
+    // Attempt multimodal recognition with recommended models in sequence
+    const candidateModels = ['gemini-flash-latest', 'gemini-3.8-flash', 'gemini-3.1-flash-lite'];
+    let response: any = null;
+    let successfulModel = '';
+    let lastModelError: any = null;
+
+    for (const model of candidateModels) {
+      try {
+        response = await ai.models.generateContent({
+          model,
+          contents: [
+            {
+              inlineData: {
+                mimeType: mimeType || 'image/jpeg',
+                data: base64Clean,
+              },
+            },
+            {
+              text: photoPrompt,
+            },
+          ],
+        });
+        successfulModel = model;
+        break;
+      } catch (err: any) {
+        lastModelError = err;
+        console.warn(`Model '${model}' failed for photo identification:`, err.message || err);
+      }
+    }
+
+    if (!response) {
+      const upstreamStatus = lastModelError?.status || lastModelError?.statusCode || 500;
+      console.error('All Gemini multimodal models failed for photo identification:', lastModelError);
+      return res.status(upstreamStatus).json({
+        error: lastModelError?.message || 'Gemini photo identification failed across all candidate models',
+        status: upstreamStatus,
+        details: lastModelError?.toString() || 'Unknown upstream model error',
+        endpoint: req.originalUrl,
+      });
+    }
 
     const rawText = response.text || '';
     const lower = rawText.toLowerCase();
@@ -446,6 +479,7 @@ Please format your response strictly as:
       category: category || undefined,
       description: description || undefined,
       rawText,
+      modelUsed: successfulModel,
       manufacturer: brand
         ? {
             companyName: brand,
@@ -455,8 +489,12 @@ Please format your response strictly as:
     });
   } catch (error: any) {
     console.error('Error during Gemini photo identification:', error);
-    return res.status(500).json({
+    const status = error.status || error.statusCode || 500;
+    return res.status(status).json({
       error: error.message || 'Photo identification failed',
+      status,
+      details: error.toString(),
+      endpoint: req.originalUrl,
       isNetworkError: true,
     });
   }
@@ -469,7 +507,12 @@ app.post('/api/lookup-upcitemdb', handleUPCItemDBLookup);
 app.post('/api/barcode/gemini', handleGeminiLookup);
 app.post('/api/lookup-gemini', handleGeminiLookup);
 
+// Primary and alias routes for visual photo identification
 app.post('/api/barcode/photo-identify', handlePhotoIdentify);
+app.post('/api/photo-identify', handlePhotoIdentify);
+app.post('/api/visual-identify', handlePhotoIdentify);
+app.post('/api/identify-photo', handlePhotoIdentify);
+app.post('/api/barcode/photo', handlePhotoIdentify);
 
 // Vite middleware setup
 async function startServer() {
