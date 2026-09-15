@@ -1,0 +1,10 @@
+{
+  "name": "Barcode Scanner",
+  "description": "An installable, production-ready barcode and food intelligence scanner with Open Food Facts integration, allergen cross-checking, offline support, and persistent history.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
